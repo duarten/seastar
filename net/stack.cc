@@ -105,6 +105,25 @@ future<> connected_socket::shutdown_input() {
     return _csi->shutdown_input();
 }
 
+unconnected_socket::~unconnected_socket()
+{}
+
+unconnected_socket::unconnected_socket(
+        std::unique_ptr<net::unconnected_socket_impl> usi)
+        : _usi(std::move(usi)) {
+}
+
+unconnected_socket::unconnected_socket(unconnected_socket&& us) noexcept = default;
+unconnected_socket& unconnected_socket::operator=(unconnected_socket&& us) noexcept = default;
+
+future<connected_socket> unconnected_socket::connect(socket_address sa, socket_address local) {
+    return _usi->connect(sa, local);
+}
+
+void unconnected_socket::shutdown() {
+    _usi->shutdown();
+}
+
 server_socket::server_socket() {
 }
 

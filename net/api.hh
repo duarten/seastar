@@ -120,6 +120,7 @@ struct tcp_keepalive_params {
 
 /// \cond internal
 class connected_socket_impl;
+class unconnected_socket_impl;
 class server_socket_impl;
 class udp_channel_impl;
 class get_impl;
@@ -236,6 +237,38 @@ public:
 /// \addtogroup networking-module
 /// @{
 
+/// A connection attempt.
+///
+/// An \c unconnected_socket represents a connection attempt between
+/// two endpoints.
+class unconnected_socket {
+    std::unique_ptr<net::unconnected_socket_impl> _usi;
+public:
+    ~unconnected_socket();
+
+    /// \cond internal
+    explicit unconnected_socket(std::unique_ptr<net::unconnected_socket_impl> usi);
+    /// \endcond
+    /// Moves an \c unconnected_socket object.
+    unconnected_socket(unconnected_socket&& us) noexcept;
+    /// Move-assigns an \c unconnected_socket object.
+    unconnected_socket& operator=(unconnected_socket&& us) noexcept;
+
+    /// Attempts to establish the connection.
+    ///
+    /// \return a \ref connected_socket representing the connection.
+    future<connected_socket> connect(socket_address sa, socket_address local = socket_address(::sockaddr_in{AF_INET, INADDR_ANY, {0}}));
+    /// Stops any in-flight connection attempt.
+    ///
+    /// Cancels the connection attempt if it's still in progress, and
+    /// terminates the connection if it has already been established.
+    void shutdown();
+};
+/// @}
+
+/// \addtogroup networking-module
+/// @{
+
 /// A listening socket, waiting to accept incoming network connections.
 class server_socket {
     std::unique_ptr<net::server_socket_impl> _ssi;
@@ -274,6 +307,7 @@ public:
     virtual server_socket listen(socket_address sa, listen_options opts) = 0;
     // FIXME: local parameter assumes ipv4 for now, fix when adding other AF
     virtual future<connected_socket> connect(socket_address sa, socket_address local = socket_address(::sockaddr_in{AF_INET, INADDR_ANY, {0}})) = 0;
+    virtual unconnected_socket socket() = 0;
     virtual net::udp_channel make_udp_channel(ipv4_addr addr = {}) = 0;
     virtual future<> initialize() {
         return make_ready_future();
