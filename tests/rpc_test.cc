@@ -84,19 +84,24 @@ using connect_fn = std::function<test_rpc_proto::client (ipv4_addr addr)>;
 
 class rpc_unconnected_socket_impl : public net::unconnected_socket_impl {
     loopback_connection_factory& _factory;
+    promise<connected_socket> _p;
+    bool _connect;
 public:
-    rpc_unconnected_socket_impl(loopback_connection_factory& factory)
-            : _factory(factory) {
+    rpc_unconnected_socket_impl(loopback_connection_factory& factory, bool connect)
+            : _factory(factory), _connect(connect) {
     }
     virtual future<connected_socket> connect(socket_address sa, socket_address local) override {
-        return _factory.make_new_connection();
+        return _connect ? _factory.make_new_connection() : _p.get_future();
     }
     virtual void shutdown() override {
+        if (!_connect) {
+            _p.set_exception(std::make_exception_ptr(std::system_error(ECONNABORTED, std::system_category())));
+        }
     }
 };
 
 future<>
-with_rpc_env(rpc::resource_limits resource_limits,
+with_rpc_env(rpc::resource_limits resource_limits, bool connect,
         std::function<future<> (test_rpc_proto& proto, test_rpc_proto::server& server, connect_fn connect)> test_fn) {
     struct state {
         test_rpc_proto proto{serializer()};
@@ -105,17 +110,16 @@ with_rpc_env(rpc::resource_limits resource_limits,
     };
     return do_with(state(), [=] (state& s) {
         s.server = std::make_unique<test_rpc_proto::server>(s.proto, s.lcf.get_server_socket(), resource_limits);
-        auto make_client = [&s] (ipv4_addr addr) {
-            auto unconn = unconnected_socket(std::make_unique<rpc_unconnected_socket_impl>(s.lcf));
+        auto make_client = [&s, connect] (ipv4_addr addr) {
+            auto unconn = unconnected_socket(std::make_unique<rpc_unconnected_socket_impl>(s.lcf, connect));
             return test_rpc_proto::client(s.proto, std::move(unconn), addr);
         };
         return test_fn(s.proto, *s.server, make_client);
     });
 }
 
-
 SEASTAR_TEST_CASE(test_rpc_connect) {
-    return with_rpc_env({}, [] (test_rpc_proto& proto, test_rpc_proto::server& s, connect_fn connect) {
+    return with_rpc_env({}, true, [] (test_rpc_proto& proto, test_rpc_proto::server& s, connect_fn connect) {
         return seastar::async([&proto, &s, connect] {
             auto c1 = connect(ipv4_addr());
             auto sum = proto.register_handler(1, [](int a, int b) {
@@ -123,6 +127,20 @@ SEASTAR_TEST_CASE(test_rpc_connect) {
             });
             auto result = sum(c1, 2, 3).get0();
             BOOST_REQUIRE_EQUAL(result, 2 + 3);
+        });
+    });
+}
+
+SEASTAR_TEST_CASE(test_rpc_connect_abort) {
+    return with_rpc_env({}, false, [] (test_rpc_proto& proto, test_rpc_proto::server& s, connect_fn connect) {
+        return seastar::async([&proto, &s, connect] {
+            auto c1 = connect(ipv4_addr());
+            auto f = proto.register_handler(1, []() { return make_ready_future<>(); });
+            c1.stop().get0();
+            try {
+                f(c1).get0();
+                BOOST_REQUIRE(false);
+            } catch (...) {}
         });
     });
 }
