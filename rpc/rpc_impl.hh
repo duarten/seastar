@@ -348,7 +348,7 @@ auto send_helper(MsgType xt, signature<Ret (InArgs...)> xsig) {
             using wait = wait_signature_t<Ret>;
             return wait_for_reply<Serializer, MsgType>(wait(), timeout, dst, msg_id, sig).then_wrapped([sent = std::move(sent)] (auto f) mutable {
                // FIXME: if wait_for_reply timeouts the code does not wait for data to be sent,
-               //        so it should cancel sending in addition 
+               //        so it should cancel sending in addition
                if (f.failed()) {
                     return f;
                 } else {
@@ -844,11 +844,12 @@ protocol<Serializer, MsgType>::client::read_response_frame(input_stream<char>& i
 }
 
 template<typename Serializer, typename MsgType>
-protocol<Serializer, MsgType>::client::client(protocol& proto, client_options ops, ipv4_addr addr, future<connected_socket> f) : protocol<Serializer, MsgType>::connection(proto), _server_addr(addr) {
+protocol<Serializer, MsgType>::client::client(protocol& proto, client_options ops, unconnected_socket socket, ipv4_addr addr, ipv4_addr local)
+        : protocol<Serializer, MsgType>::connection(proto), _socket(std::move(socket)), _server_addr(addr) {
     this->_output_ready = _connected_promise.get_future();
     feature_map features;
     send_negotiation_frame(*this, std::move(features));
-    f.then([this, ops = std::move(ops)] (connected_socket fd) {
+    _socket.connect(addr, local).then([this, ops = std::move(ops)] (connected_socket fd) {
         fd.set_nodelay(true);
         if (ops.keepalive) {
             fd.set_keepalive(true);
@@ -896,7 +897,6 @@ protocol<Serializer, MsgType>::client::client(protocol& proto, client_options op
         if (!_connected) {
             this->_connected_promise.set_exception(closed_error());
         }
-        _connected = false; // prevent running shutdown() on this
         this->_output_ready.then_wrapped([this, need_close] (future<> f) {
             f.ignore_ready_future();
             return need_close ? this->_write_buf.close() : make_ready_future<>();
@@ -910,17 +910,17 @@ protocol<Serializer, MsgType>::client::client(protocol& proto, client_options op
 
 template<typename Serializer, typename MsgType>
 protocol<Serializer, MsgType>::client::client(protocol<Serializer, MsgType>& proto, ipv4_addr addr, ipv4_addr local)
-    : client(proto, client_options{}, addr, ::connect(addr, local))
+    : client(proto, client_options{}, ::socket(), addr, local)
 {}
 
 template<typename Serializer, typename MsgType>
-protocol<Serializer, MsgType>::client::client(protocol<Serializer, MsgType>& proto, client_options ops, ipv4_addr addr, ipv4_addr local)
-    : client(proto, std::move(ops), addr, ::connect(addr, local))
+protocol<Serializer, MsgType>::client::client(protocol<Serializer, MsgType>& proto, client_options options, ipv4_addr addr, ipv4_addr local)
+    : client(proto, options, ::socket(), addr, local)
 {}
 
 template<typename Serializer, typename MsgType>
-protocol<Serializer, MsgType>::client::client(protocol& proto, ipv4_addr addr, future<connected_socket> f)
-    : client(proto, client_options{}, addr, std::move(f))
+protocol<Serializer, MsgType>::client::client(protocol<Serializer, MsgType>& proto, unconnected_socket socket, ipv4_addr addr, ipv4_addr local)
+    : client(proto, client_options{}, std::move(socket), addr, local)
 {}
 
 }

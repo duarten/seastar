@@ -187,6 +187,7 @@ public:
     class client : public protocol::connection {
         promise<> _connected_promise;
         bool _connected = false;
+        unconnected_socket _socket;
         id_type _message_id = 1;
         struct reply_handler_base {
             timer<> t;
@@ -218,17 +219,25 @@ public:
         future<int64_t, std::experimental::optional<temporary_buffer<char>>>
         read_response_frame(input_stream<char>& in);
     public:
-        client(protocol& proto, ipv4_addr addr, ipv4_addr local = ipv4_addr());
-        client(protocol& proto, client_options options, ipv4_addr addr, ipv4_addr local = ipv4_addr());
         /**
-         * Create client object using the connected_socket result of the
-         * provided future.
+         * Create client object which will attempt to connect to the remote address.
          *
          * @param addr the remote address identifying this client
-         * @param f a future<> resulting in a connected_socket for the connection
+         * @param local the local address of this client
          */
-        client(protocol& proto, ipv4_addr addr, future<connected_socket> f);
-        client(protocol& proto, client_options options, ipv4_addr addr, future<connected_socket> f);
+        client(protocol& proto, ipv4_addr addr, ipv4_addr local = ipv4_addr());
+        client(protocol& proto, client_options options, ipv4_addr addr, ipv4_addr local = ipv4_addr());
+
+         /**
+         * Create client object which will attempt to connect to the remote address using the
+         * specified unconnected_socket.
+         *
+         * @param addr the remote address identifying this client
+         * @param local the local address of this client
+         * @param socket the socket object use to connect to the remote address
+         */
+        client(protocol& proto, unconnected_socket socket, ipv4_addr addr, ipv4_addr local = ipv4_addr());
+        client(protocol& proto, client_options options, unconnected_socket socket, ipv4_addr addr, ipv4_addr local = ipv4_addr());
 
         stats get_stats() const {
             stats res = this->_stats;
@@ -258,10 +267,10 @@ public:
                 this->_error = true;
                 if (_connected) {
                     return connection::stop();
+                } else {
+                    _socket.shutdown();
                 }
             }
-            // connection::stop will fail on shutdown(); since we can't shutdown a
-            // connect(), just wait for it to timeout
             return this->_stopped.get_future();
         }
         ipv4_addr peer_address() const {
