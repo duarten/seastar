@@ -842,6 +842,24 @@ private:
     ::server_socket _sock;
 };
 
+class tls_unconnected_socket_impl : public net::unconnected_socket_impl {
+    ::shared_ptr<certificate_credentials> _cred;
+    sstring _name;
+    unconnected_socket _socket;
+public:
+    tls_unconnected_socket_impl(::shared_ptr<certificate_credentials> cred, sstring name)
+            : _cred(cred), _name(std::move(name)), _socket(engine().socket()) {
+    }
+    virtual future<connected_socket> connect(socket_address sa, socket_address local) override {
+        return _socket.connect(sa, local).then([cred = std::move(_cred), name = std::move(_name)](::connected_socket s) mutable {
+            return wrap_client(cred, std::move(s), std::move(name));
+        });
+    }
+    virtual void shutdown() override {
+        _socket.shutdown();
+    }
+};
+
 }
 }
 
@@ -864,6 +882,10 @@ future<::connected_socket> seastar::tls::connect(::shared_ptr<certificate_creden
     return engine().connect(sa, local).then([cred = std::move(cred), name = std::move(name)](::connected_socket s) mutable {
         return wrap_client(cred, std::move(s), std::move(name));
     });
+}
+
+unconnected_socket seastar::tls::socket(::shared_ptr<certificate_credentials> cred, sstring name) {
+    return unconnected_socket(std::make_unique<tls_unconnected_socket_impl>(std::move(cred), std::move(name)));
 }
 
 future<::connected_socket> seastar::tls::wrap_client(::shared_ptr<certificate_credentials> cred, ::connected_socket&& s, sstring name) {
