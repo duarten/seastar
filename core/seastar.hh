@@ -51,6 +51,7 @@ template <class CharType> class output_stream;
 // reactor.hh
 class server_socket;
 class connected_socket;
+class unconnected_socket;
 class socket_address;
 class listen_options;
 
@@ -118,6 +119,11 @@ future<connected_socket> connect(socket_address sa);
 ///
 /// \return a \ref connected_socket object, or an exception
 future<connected_socket> connect(socket_address sa, socket_address local);
+
+/// A socket that can connect to a given address.
+///
+/// \return an \ref unconnected_socket object, or an exception
+unconnected_socket socket();
 
 /// @}
 

@@ -774,6 +774,7 @@ public:
 
     future<connected_socket> connect(socket_address sa);
     future<connected_socket> connect(socket_address, socket_address);
+    unconnected_socket socket();
 
     pollable_fd posix_listen(socket_address sa, listen_options opts = {});
 

@@ -517,6 +517,12 @@ reactor::connect(socket_address sa, socket_address local) {
     return _network_stack->connect(sa, local);
 }
 
+
+unconnected_socket
+reactor::socket() {
+    return _network_stack->socket();
+}
+
 void reactor_backend_epoll::complete_epoll_event(pollable_fd_state& pfd, promise<> pollable_fd_state::*pr,
         int events, int event) {
     if (pfd.events_requested & events & event) {
@@ -2962,6 +2968,11 @@ future<connected_socket> connect(socket_address sa) {
 
 future<connected_socket> connect(socket_address sa, socket_address local) {
     return engine().connect(sa, local);
+}
+
+
+unconnected_socket socket() {
+    return engine().socket();
 }
 
 void reactor::add_high_priority_task(std::unique_ptr<task>&& t) {
