@@ -95,6 +95,12 @@ class chunked_fifo {
         // begin and end interpreted mod items_per_chunk
         unsigned begin;
         unsigned end;
+        bool is_full() const {
+            return end - begin == items_per_chunk;
+        }
+        bool is_empty() const {
+            return begin == end;
+        }
     };
     // We pop from the chunk at _front_chunk. This chunk is then linked to
     // the following chunks via the "next" link. _back_chunk points to the
@@ -301,8 +307,7 @@ template <typename T, size_t items_per_chunk>
 inline void
 chunked_fifo<T, items_per_chunk>::ensure_room_back() {
     // If we don't have a back chunk or it's full, we need to create a new one
-    if (_back_chunk == nullptr ||
-            (_back_chunk->end - _back_chunk->begin) == items_per_chunk) {
+    if (_back_chunk == nullptr || _back_chunk->is_full()) {
         back_chunk_new();
     }
 }
@@ -314,7 +319,7 @@ chunked_fifo<T, items_per_chunk>::undo_room_back() {
     // new empty chunk, we must remove it, or empty() will be incorrect
     // (either immediately, if the fifo was empty, or when all the items are
     // popped, if it already had items).
-    if (_back_chunk->begin == _back_chunk->end) {
+    if (_back_chunk->is_empty()) {
         delete _back_chunk;
         --_nchunks;
         if (_nchunks == 0) {
