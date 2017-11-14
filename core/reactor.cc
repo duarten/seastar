@@ -3116,16 +3116,6 @@ public:
     }
 };
 
-class reactor::poller::deregistration_task : public task {
-private:
-    std::unique_ptr<pollfn> _p;
-public:
-    explicit deregistration_task(std::unique_ptr<pollfn>&& p) : _p(std::move(p)) {}
-    virtual void run() noexcept override {
-        engine().unregister_poller(_p.get());
-    }
-};
-
 void reactor::register_poller(pollfn* p) {
     _pollers.push_back(p);
 }
@@ -3182,7 +3172,9 @@ reactor::poller::~poller() {
         } else {
             auto dummy = make_pollfn([] { return false; });
             auto dummy_p = dummy.get();
-            auto task = std::make_unique<deregistration_task>(std::move(dummy));
+            auto task = make_task([t = std::move(dummy)] {
+                engine().unregister_poller(t.get());
+            });
             engine().add_task(std::move(task));
             engine().replace_poller(_pollfn.get(), dummy_p);
         }

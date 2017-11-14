@@ -632,7 +632,6 @@ public:
     class poller {
         std::unique_ptr<pollfn> _pollfn;
         class registration_task;
-        class deregistration_task;
         registration_task* _registration_task;
     public:
         template <typename Func> // signature: bool ()
