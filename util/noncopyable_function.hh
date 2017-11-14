@@ -105,7 +105,8 @@ private:
     struct select_vtable_for<Func, false> : indirect_vtable_for<Func> {};
     template <typename Func>
     static constexpr bool is_direct() {
-        return sizeof(Func) <= nr_direct && alignof(Func) <= alignof(storage);
+        return std::is_nothrow_move_constructible<Func>::value &&
+            sizeof(Func) <= nr_direct && alignof(Func) <= alignof(storage);
     }
     template <typename Func>
     struct vtable_for : select_vtable_for<Func, is_direct<Func>()> {};
@@ -113,8 +114,6 @@ public:
     noncopyable_function() noexcept : _vtable(&_s_empty_vtable) {}
     template <typename Func>
     noncopyable_function(Func func) noexcept {
-        // If we want, we can support throwing move constructible functions by using the indirect path
-        static_assert(std::is_nothrow_move_constructible<Func>::value, "must be nothrow move constructible");
         vtable_for<Func>::initialize(std::move(func), this);
         _vtable = &vtable_for<Func>::s_vtable;
     }
@@ -130,11 +129,11 @@ public:
     noncopyable_function(const noncopyable_function&) = delete;
     noncopyable_function& operator=(const noncopyable_function&) = delete;
 
-    noncopyable_function(noncopyable_function&& x) noexcept : _vtable(std::exchange(x._vtable, &_s_empty_vtable)) {
+    noncopyable_function(noncopyable_function&& x) : _vtable(std::exchange(x._vtable, &_s_empty_vtable)) {
         _vtable->move(&x, this);
     }
 
-    noncopyable_function& operator=(noncopyable_function&& x) noexcept {
+    noncopyable_function& operator=(noncopyable_function&& x) {
         if (this != &x) {
             this->~noncopyable_function();
             new (this) noncopyable_function(std::move(x));
