@@ -3097,21 +3097,25 @@ reactor::pure_poll_once() {
     return false;
 }
 
-class reactor::poller::registration_task : public task {
+class reactor::poller::registration_context {
 private:
     poller* _p;
 public:
-    explicit registration_task(poller* p) : _p(p) {}
-    virtual void run() noexcept override {
+    explicit registration_context(poller* p) : _p(p) {}
+    registration_context(registration_context&& other)
+            : _p(other._p) {
+        _p->_registration_context = this;
+    }
+    void register_poller() const noexcept {
         if (_p) {
             engine().register_poller(_p->_pollfn.get());
-            _p->_registration_task = nullptr;
+            _p->_registration_context = nullptr;
         }
     }
-    void cancel() {
+    void cancel() noexcept {
         _p = nullptr;
     }
-    void moved(poller* p) {
+    void moved(poller* p) noexcept {
         _p = p;
     }
 };
@@ -3129,9 +3133,9 @@ void reactor::replace_poller(pollfn* old, pollfn* neww) {
 }
 
 reactor::poller::poller(poller&& x)
-        : _pollfn(std::move(x._pollfn)), _registration_task(x._registration_task) {
-    if (_pollfn && _registration_task) {
-        _registration_task->moved(this);
+        : _pollfn(std::move(x._pollfn)), _registration_context(x._registration_context) {
+    if (_pollfn && _registration_context) {
+        _registration_context->moved(this);
     }
 }
 
@@ -3150,10 +3154,9 @@ reactor::poller::do_register() {
     // may be running inside a poller ourselves, and so in the middle of
     // iterating reactor::_pollers itself.  So we schedule a task to add
     // the poller instead.
-    auto task = std::make_unique<registration_task>(this);
-    auto tmp = task.get();
-    engine().add_task(std::move(task));
-    _registration_task = tmp;
+    engine().add_task(make_task([reg = registration_context(this)] {
+        reg.register_poller();
+    }));
 }
 
 reactor::poller::~poller() {
@@ -3166,9 +3169,9 @@ reactor::poller::~poller() {
     // we replace it atomically with another one, and schedule a task to
     // delete the replacement.
     if (_pollfn) {
-        if (_registration_task) {
+        if (_registration_context) {
             // not added yet, so don't do it at all.
-            _registration_task->cancel();
+            _registration_context->cancel();
         } else {
             auto dummy = make_pollfn([] { return false; });
             auto dummy_p = dummy.get();

@@ -631,8 +631,8 @@ private:
 public:
     class poller {
         std::unique_ptr<pollfn> _pollfn;
-        class registration_task;
-        registration_task* _registration_task;
+        class registration_context;
+        registration_context* _registration_context;
     public:
         template <typename Func> // signature: bool ()
         static poller simple(Func&& poll) {
