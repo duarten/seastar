@@ -21,10 +21,13 @@
 
 #pragma once
 
-#include <memory>
 #include "scheduling.hh"
+#include "util/noncopyable_function.hh"
+#include <memory>
 
 namespace seastar {
+
+using task_func = noncopyable_function<void()>;
 
 class task {
     scheduling_group _sg;
@@ -38,27 +41,23 @@ public:
 void schedule(std::unique_ptr<task> t);
 void schedule_urgent(std::unique_ptr<task> t);
 
-template <typename Func>
 class lambda_task final : public task {
-    Func _func;
+    task_func _func;
 public:
-    lambda_task(scheduling_group sg, const Func& func) : task(sg), _func(func) {}
-    lambda_task(scheduling_group sg, Func&& func) : task(sg), _func(std::move(func)) {}
+    lambda_task(scheduling_group sg, task_fund&& func) : task(sg), _func(std::move(func)) {}
     virtual void run() noexcept override { _func(); }
 };
 
-template <typename Func>
 inline
 std::unique_ptr<task>
-make_task(Func&& func) {
-    return std::make_unique<lambda_task<Func>>(current_scheduling_group(), std::forward<Func>(func));
+make_task(task_func func) {
+    return std::make_unique<lambda_task>(current_scheduling_group(), std::move(func));
 }
 
-template <typename Func>
 inline
 std::unique_ptr<task>
-make_task(scheduling_group sg, Func&& func) {
-    return std::make_unique<lambda_task<Func>>(sg, std::forward<Func>(func));
+make_task(scheduling_group sg, task_func func) {
+    return std::make_unique<lambda_task>(sg, std::move(func));
 }
 
 }
