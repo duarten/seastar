@@ -2428,8 +2428,7 @@ void reactor::run_tasks(task_queue& tq) {
         auto tsk = std::move(tasks.front());
         tasks.pop_front();
         STAP_PROBE(seastar, reactor_run_tasks_single_start);
-        tsk->run();
-        tsk.reset();
+        tsk.run();
         STAP_PROBE(seastar, reactor_run_tasks_single_end);
         ++tq._tasks_processed;
         // check at end of loop, to allow at least one task to run
@@ -3470,11 +3469,11 @@ future<size_t> readable_eventfd::wait() {
     });
 }
 
-void schedule(std::unique_ptr<task> t) {
+void schedule(task t) {
     engine().add_task(std::move(t));
 }
 
-void schedule_urgent(std::unique_ptr<task> t) {
+void schedule_urgent(task t) {
     engine().add_urgent_task(std::move(t));
 }
 
@@ -4295,7 +4294,7 @@ future<connected_socket> connect(socket_address sa, socket_address local, transp
     return engine().connect(sa, local, proto);
 }
 
-void reactor::add_high_priority_task(std::unique_ptr<task>&& t) {
+void reactor::add_high_priority_task(task&& t) {
     add_urgent_task(std::move(t));
     // break .then() chains
     g_need_preempt = true;

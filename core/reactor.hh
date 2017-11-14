@@ -738,7 +738,7 @@ private:
         uint8_t _id;
         sched_clock::duration _runtime = {};
         uint64_t _tasks_processed = 0;
-        chunked_fifo<std::unique_ptr<task>> _q;
+        chunked_fifo<task> _q;
         sstring _name;
         int64_t to_vruntime(sched_clock::duration runtime) const;
         void set_shares(float shares);
@@ -921,8 +921,8 @@ public:
         _at_destroy_tasks->_q.push_back(make_task(default_scheduling_group(), std::forward<Func>(func)));
     }
 
-    void add_task(std::unique_ptr<task>&& t) {
-        auto sg = t->group();
+    void add_task(task&& t) {
+        auto sg = t.group();
         auto* q = _task_queues[sg._id].get();
         bool was_empty = q->_q.empty();
         q->_q.push_back(std::move(t));
@@ -930,8 +930,8 @@ public:
             activate(*q);
         }
     }
-    void add_urgent_task(std::unique_ptr<task>&& t) {
-        auto sg = t->group();
+    void add_urgent_task(task&& t) {
+        auto sg = t.group();
         auto* q = _task_queues[sg._id].get();
         bool was_empty = q->_q.empty();
         q->_q.push_front(std::move(t));
@@ -953,7 +953,7 @@ public:
     }
     void force_poll();
 
-    void add_high_priority_task(std::unique_ptr<task>&&);
+    void add_high_priority_task(task&&);
 
     network_stack& net() { return *_network_stack; }
     shard_id cpu_id() const { return _id; }

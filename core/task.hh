@@ -38,20 +38,26 @@ public:
     scheduling_group group() const { return _sg; }
 };
 
-void schedule(std::unique_ptr<task> t);
-void schedule_urgent(std::unique_ptr<task> t);
+void schedule(task t);
+void schedule_urgent(task t);
 
 
 inline
 std::unique_ptr<task>
-make_task(task_func func) {
+make_task_ptr(task_func func) {
     return std::make_unique<task>(current_scheduling_group(), std::move(func));
 }
 
 inline
-std::unique_ptr<task>
+task
 make_task(scheduling_group sg, task_func func) {
-    return std::make_unique<task>(sg, std::move(func));
+    return task(current_scheduling_group(), std::move(func));
+}
+
+inline
+task
+make_task(scheduling_group sg, task_func func) {
+    return task(sg, std::move(func));
 }
 
 }
