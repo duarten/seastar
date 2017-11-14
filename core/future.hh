@@ -26,6 +26,7 @@
 #include "task.hh"
 #include "preempt.hh"
 #include "thread_impl.hh"
+#include "util/noncopyable_function.hh"
 #include <stdexcept>
 #include <atomic>
 #include <memory>
@@ -388,17 +389,6 @@ struct future_state<> {
     void forward_to(promise<>& pr) noexcept;
 };
 
-template <typename Func, typename... T>
-struct continuation final : task {
-    continuation(Func&& func, future_state<T...>&& state) : _state(std::move(state)), _func(std::move(func)) {}
-    continuation(Func&& func) : _func(std::move(func)) {}
-    virtual void run() noexcept override {
-        _func(std::move(_state));
-    }
-    future_state<T...> _state;
-    Func _func;
-};
-
 /// \endcond
 
 /// \brief promise - allows a future value to be made available at a later time.
@@ -409,23 +399,22 @@ class promise {
     enum class urgent { no, yes };
     future<T...>* _future = nullptr;
     future_state<T...> _local_state;
-    future_state<T...>* _state;
-    std::unique_ptr<task> _task;
+    using continuation_type = noncopyable_function<void(future_state<T...>)>;
+    continuation_type _continuation;
     static constexpr bool copy_noexcept = future_state<T...>::copy_noexcept;
 public:
     /// \brief Constructs an empty \c promise.
     ///
     /// Creates promise with no associated future yet (see get_future()).
-    promise() noexcept : _state(&_local_state) {}
+    promise() noexcept {}
 
     /// \brief Moves a \c promise object.
-    promise(promise&& x) noexcept : _future(x._future), _state(x._state), _task(std::move(x._task)) {
-        if (_state == &x._local_state) {
-            _state = &_local_state;
-            _local_state = std::move(x._local_state);
-        }
+    __attribute__((always_inline))
+    promise(promise&& x) noexcept
+            : _future(x._future)
+            , _local_state(std::move(x._local_state))
+            , _continuation(std::move(x._continuation)) {
         x._future = nullptr;
-        x._state = nullptr;
         migrated();
     }
     promise(const promise&) = delete;
@@ -472,8 +461,7 @@ public:
     /// future.  May be called either before or after \c get_future().
     template <typename... A>
     void set_value(A&&... a) noexcept {
-        assert(_state);
-        _state->set(std::forward<A>(a)...);
+        _local_state.set(std::forward<A>(a)...);
         make_ready<urgent::no>();
     }
 
@@ -496,8 +484,7 @@ public:
 private:
     template<urgent Urgent>
     void do_set_value(std::tuple<T...> result) noexcept {
-        assert(_state);
-        _state->set(std::move(result));
+        _local_state.set(std::move(result));
         make_ready<Urgent>();
     }
 
@@ -511,8 +498,7 @@ private:
 
     template<urgent Urgent>
     void do_set_exception(std::exception_ptr ex) noexcept {
-        assert(_state);
-        _state->set_exception(std::move(ex));
+        _local_state.set_exception(std::move(ex));
         make_ready<Urgent>();
     }
 
@@ -520,11 +506,8 @@ private:
         do_set_exception<urgent::yes>(std::move(ex));
     }
 private:
-    template <typename Func>
-    void schedule(Func&& func) {
-        auto tws = std::make_unique<continuation<Func, T...>>(std::move(func));
-        _state = &tws->_state;
-        _task = std::move(tws);
+    void schedule(continuation_type continuation) {
+        _continuation = std::move(continuation);
     }
     template<urgent Urgent>
     __attribute__((always_inline))
@@ -718,12 +701,14 @@ private:
     }
     [[gnu::always_inline]]
     future_state<T...>* state() noexcept {
-        return _promise ? _promise->_state : &_local_state;
+        return _promise ? &_promise->_local_state : &_local_state;
     }
     template <typename Func>
     void schedule(Func&& func) {
         if (state()->available()) {
-            ::seastar::schedule(std::make_unique<continuation<Func, T...>>(std::move(func), std::move(*state())));
+            ::seastar::schedule(make_task([func = std::move(func), state = std::move(*state())] () mutable {
+                func(std::move(state));
+            }));
         } else {
             assert(_promise);
             _promise->schedule(std::move(func));
@@ -1158,7 +1143,7 @@ template <typename... T>
 inline
 future<T...>
 promise<T...>::get_future() noexcept {
-    assert(!_future && _state && !_task);
+    assert(!_future && !_continuation);
     return future<T...>(this);
 }
 
@@ -1166,12 +1151,14 @@ template <typename... T>
 template<typename promise<T...>::urgent Urgent>
 inline
 void promise<T...>::make_ready() noexcept {
-    if (_task) {
-        _state = nullptr;
+    if (_continuation) {
+        auto task = make_task([cont = std::move(_continuation), state = std::move(_local_state)] () mutable {
+            cont(std::move(state));
+        });
         if (Urgent == urgent::yes && !need_preempt()) {
-            ::seastar::schedule_urgent(std::move(_task));
+            ::seastar::schedule_urgent(std::move(task));
         } else {
-            ::seastar::schedule(std::move(_task));
+            ::seastar::schedule(std::move(task));
         }
     }
 }
@@ -1188,12 +1175,11 @@ template <typename... T>
 inline
 void promise<T...>::abandoned() noexcept {
     if (_future) {
-        assert(_state);
-        assert(_state->available() || !_task);
-        _future->_local_state = std::move(*_state);
+        assert(_local_state.available() || !_continuation);
+        _future->_local_state = std::move(_local_state);
         _future->_promise = nullptr;
-    } else if (_state && _state->failed()) {
-        report_failed_future(_state->get_exception());
+    } else if (_local_state.failed()) {
+        report_failed_future(_local_state.get_exception());
     }
 }
 
