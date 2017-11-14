@@ -58,6 +58,17 @@ BOOST_AUTO_TEST_CASE(chunked_fifo_small) {
     BOOST_REQUIRE_EQUAL(fifo.size(), 1);
     BOOST_REQUIRE_EQUAL(fifo.empty(), false);
     BOOST_REQUIRE_EQUAL(fifo.front(), 57);
+
+    fifo.push_front(61);
+    BOOST_REQUIRE_EQUAL(fifo.front(), 61);
+    fifo.push_front(62);
+    fifo.push_front(63);
+    BOOST_REQUIRE_EQUAL(fifo.front(), 63);
+    fifo.pop_front();
+    fifo.pop_front();
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.front(), 57);
+
     // check miscelleneous methods (at least they shouldn't crash)
     fifo.clear();
     fifo.shrink_to_fit();
@@ -84,6 +95,28 @@ BOOST_AUTO_TEST_CASE(chunked_fifo_fullchunk) {
         BOOST_REQUIRE_EQUAL(fifo.size(), N+1-i);
         fifo.pop_front();
     }
+    BOOST_REQUIRE_EQUAL(fifo.size(), 0);
+    BOOST_REQUIRE_EQUAL(fifo.empty(), true);
+}
+
+BOOST_AUTO_TEST_CASE(chunked_fifo_fullchunk_front) {
+    // Grow a chunked_fifo to exactly fill a chunk, and see what happens when
+    // we cross that chunk.
+    constexpr int N = 128;
+    chunked_fifo<int, N> fifo;
+    for (int i = 0; i < N+1; i++) {
+        fifo.push_front(i);
+    }
+    BOOST_REQUIRE_EQUAL(fifo.size(), N+1);
+    fifo.push_front(N+1);
+    BOOST_REQUIRE_EQUAL(fifo.size(), N+2);
+    fifo.push_back(-1);
+    for (int i = 0 ; i < N+2; i++) {
+        BOOST_REQUIRE_EQUAL(fifo.front(), N+1-i);
+        fifo.pop_front();
+    }
+    BOOST_REQUIRE_EQUAL(fifo.front(), -1);
+    fifo.pop_front();
     BOOST_REQUIRE_EQUAL(fifo.size(), 0);
     BOOST_REQUIRE_EQUAL(fifo.empty(), true);
 }
@@ -155,6 +188,40 @@ BOOST_AUTO_TEST_CASE(chunked_fifo_constructor) {
     BOOST_REQUIRE_EQUAL(destructed, N);
 }
 
+BOOST_AUTO_TEST_CASE(chunked_fifo_chunk_reuse) {
+    chunked_fifo<int, 4> fifo;
+    BOOST_REQUIRE_EQUAL(fifo.chunks(), 0);
+    fifo.push_back(1);
+    fifo.push_back(2);
+    fifo.push_back(3);
+    BOOST_REQUIRE_EQUAL(fifo.chunks(), 1);
+    fifo.pop_front();
+    fifo.push_front(4);
+    fifo.push_front(5);
+    BOOST_REQUIRE_EQUAL(fifo.chunks(), 1);
+    fifo.push_front(6);
+    BOOST_REQUIRE_EQUAL(fifo.chunks(), 2);
+    fifo.push_front(7);
+    fifo.push_front(8);
+    BOOST_REQUIRE_EQUAL(fifo.chunks(), 2);
+    BOOST_REQUIRE_EQUAL(fifo.front(), 8);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.front(), 7);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.front(), 6);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.front(), 5);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.front(), 4);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.chunks(), 1);
+    BOOST_REQUIRE_EQUAL(fifo.front(), 2);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.front(), 3);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.chunks(), 0);
+}
+
 BOOST_AUTO_TEST_CASE(chunked_fifo_construct_fail) {
     // Check that if we fail to construct the item pushed, the queue remains
     // empty.
@@ -169,6 +236,27 @@ BOOST_AUTO_TEST_CASE(chunked_fifo_construct_fail) {
     BOOST_REQUIRE_EQUAL(fifo.empty(), true);
     try {
         fifo.emplace_back();
+    } catch(my_exception) {
+        // expected, ignore
+    }
+    BOOST_REQUIRE_EQUAL(fifo.size(), 0);
+    BOOST_REQUIRE_EQUAL(fifo.empty(), true);
+}
+
+BOOST_AUTO_TEST_CASE(chunked_fifo_construct_fail_front) {
+    // Check that if we fail to construct the item pushed, the queue remains
+    // empty.
+    class my_exception {};
+    struct typ {
+        typ() {
+            throw my_exception();
+        }
+    };
+    chunked_fifo<typ> fifo;
+    BOOST_REQUIRE_EQUAL(fifo.size(), 0);
+    BOOST_REQUIRE_EQUAL(fifo.empty(), true);
+    try {
+        fifo.emplace_front();
     } catch(my_exception) {
         // expected, ignore
     }
@@ -197,6 +285,40 @@ BOOST_AUTO_TEST_CASE(chunked_fifo_construct_fail2) {
     fifo.emplace_back(false);
     try {
         fifo.emplace_back(true);
+    } catch(my_exception) {
+        // expected, ignore
+    }
+    BOOST_REQUIRE_EQUAL(fifo.size(), 2);
+    BOOST_REQUIRE_EQUAL(fifo.empty(), false);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.size(), 1);
+    BOOST_REQUIRE_EQUAL(fifo.empty(), false);
+    fifo.pop_front();
+    BOOST_REQUIRE_EQUAL(fifo.size(), 0);
+    BOOST_REQUIRE_EQUAL(fifo.empty(), true);
+}
+
+BOOST_AUTO_TEST_CASE(chunked_fifo_construct_fail2_front) {
+    // A slightly more elaborate test, with a chunk size of 2
+    // items, and the third addition failing, so the question is
+    // not whether empty() is wrong immediately, but whether after
+    // we pop the two items, it will become true or we'll be left
+    // with an empty chunk.
+    class my_exception {};
+    struct typ {
+        typ(bool fail) {
+            if (fail) {
+                throw my_exception();
+            }
+        }
+    };
+    chunked_fifo<typ, 2> fifo;
+    BOOST_REQUIRE_EQUAL(fifo.size(), 0);
+    BOOST_REQUIRE_EQUAL(fifo.empty(), true);
+    fifo.emplace_front(false);
+    fifo.emplace_front(false);
+    try {
+        fifo.emplace_front(true);
     } catch(my_exception) {
         // expected, ignore
     }

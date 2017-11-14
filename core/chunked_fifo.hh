@@ -137,10 +137,14 @@ public:
     chunked_fifo& operator=(chunked_fifo&&) noexcept;
     inline void push_back(const T& data);
     inline void push_back(T&& data);
+    inline void push_front(const T& data);
+    inline void push_front(T&& data);
     T& back();
     const T& back() const;
     template <typename... A>
     inline void emplace_back(A&&... args);
+    template <typename... A>
+    inline void emplace_front(A&&... args);
     inline T& front() const noexcept;
     inline void pop_front() noexcept;
     inline bool empty() const noexcept;
@@ -156,11 +160,18 @@ public:
     // shrink_to_fit() frees memory held, but unused, by the queue. Such
     // unused memory might exist after pops, or because of reserve().
     void shrink_to_fit();
+    // Exposed for testing purposes
+    size_t chunks() const {
+        return _nchunks;
+    }
 private:
     void back_chunk_new();
     void front_chunk_delete() noexcept;
     inline void ensure_room_back();
     void undo_room_back();
+    void front_chunk_new();
+    inline void ensure_room_front();
+    void undo_room_front();
     inline size_t mask(size_t idx) const noexcept;
 
 };
@@ -395,6 +406,93 @@ inline
 const T&
 chunked_fifo<T, items_per_chunk>::back() const {
     return _back_chunk->items[mask(_back_chunk->end - 1)].data;
+}
+
+template <typename T, size_t items_per_chunk>
+void
+chunked_fifo<T, items_per_chunk>::front_chunk_new() {
+    chunk* old = _front_chunk;
+    if (_free_chunks) {
+        _front_chunk = _free_chunks;
+        _free_chunks = _free_chunks->next;
+        --_nfree_chunks;
+    } else {
+        _front_chunk = new chunk;
+    }
+    _front_chunk->next = old;
+    _front_chunk->begin = items_per_chunk;
+    _front_chunk->end = items_per_chunk;
+    if (_back_chunk == nullptr) {
+        _back_chunk = _front_chunk;
+    }
+    _nchunks++;
+}
+
+template <typename T, size_t items_per_chunk>
+inline void
+chunked_fifo<T, items_per_chunk>::ensure_room_front() {
+    // If we don't have a front chunk or it's full, we need to create a new one
+    if (_front_chunk == nullptr || _front_chunk->is_full()) {
+        front_chunk_new();
+    }
+}
+
+template <typename T, size_t items_per_chunk>
+void
+chunked_fifo<T, items_per_chunk>::undo_room_front() {
+    // If we failed creating a new item after ensure_room_front() created a
+    // new empty chunk, we must remove it, or empty() will be incorrect
+    // (either immediately, if the fifo was empty, or when all the items are
+    // popped, if it already had items).
+    if (_front_chunk->is_empty()) {
+        front_chunk_delete();
+    }
+}
+
+template <typename T, size_t items_per_chunk>
+template <typename... Args>
+inline void
+chunked_fifo<T, items_per_chunk>::emplace_front(Args&&... args) {
+    ensure_room_front();
+    --_front_chunk->begin;
+    auto p = &_front_chunk->items[mask(_front_chunk->begin)].data;
+    try {
+        new(p) T(std::forward<Args>(args)...);
+    } catch(...) {
+        ++_front_chunk->begin;
+        undo_room_front();
+        throw;
+    }
+}
+
+template <typename T, size_t items_per_chunk>
+inline void
+chunked_fifo<T, items_per_chunk>::push_front(const T& data) {
+    ensure_room_front();
+    --_front_chunk->begin;
+    auto p = &_front_chunk->items[mask(_front_chunk->begin)].data;
+    try {
+        new(p) T(data);
+    } catch(...) {
+        ++_front_chunk->begin;
+        undo_room_front();
+        throw;
+    }
+}
+
+template <typename T, size_t items_per_chunk>
+inline void
+chunked_fifo<T, items_per_chunk>::push_front(T&& data) {
+    ensure_room_front();
+    --_front_chunk->begin;
+    auto p = &_front_chunk->items[mask(_front_chunk->begin)].data;
+    try {
+        new(p) T(std::move(data));
+    } catch(...) {
+        ++_front_chunk->begin;
+        undo_room_front();
+        throw;
+    }
 }
 
 template <typename T, size_t items_per_chunk>
