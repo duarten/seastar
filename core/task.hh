@@ -29,35 +29,29 @@ namespace seastar {
 
 using task_func = noncopyable_function<void()>;
 
-class task {
+class task final {
     scheduling_group _sg;
+    task_func _func;
 public:
-    explicit task(scheduling_group sg = current_scheduling_group()) : _sg(sg) {}
-    virtual ~task() noexcept {}
-    virtual void run() noexcept = 0;
+    explicit task(scheduling_group sg, task_func&& func) : _sg(sg), _func(std::move(func)) {}
+    void run() noexcept { _func(); }
     scheduling_group group() const { return _sg; }
 };
 
 void schedule(std::unique_ptr<task> t);
 void schedule_urgent(std::unique_ptr<task> t);
 
-class lambda_task final : public task {
-    task_func _func;
-public:
-    lambda_task(scheduling_group sg, task_fund&& func) : task(sg), _func(std::move(func)) {}
-    virtual void run() noexcept override { _func(); }
-};
 
 inline
 std::unique_ptr<task>
 make_task(task_func func) {
-    return std::make_unique<lambda_task>(current_scheduling_group(), std::move(func));
+    return std::make_unique<task>(current_scheduling_group(), std::move(func));
 }
 
 inline
 std::unique_ptr<task>
 make_task(scheduling_group sg, task_func func) {
-    return std::make_unique<lambda_task>(sg, std::move(func));
+    return std::make_unique<task>(sg, std::move(func));
 }
 
 }
