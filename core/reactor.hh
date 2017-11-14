@@ -27,6 +27,7 @@
 #include "aligned_buffer.hh"
 #include "cacheline.hh"
 #include "circular_buffer_fixed_capacity.hh"
+#include "chunked_fifo.hh"
 #include <memory>
 #include <type_traits>
 #include <libaio.h>
@@ -737,7 +738,7 @@ private:
         uint8_t _id;
         sched_clock::duration _runtime = {};
         uint64_t _tasks_processed = 0;
-        circular_buffer<std::unique_ptr<task>> _q;
+        chunked_fifo<std::unique_ptr<task>> _q;
         sstring _name;
         int64_t to_vruntime(sched_clock::duration runtime) const;
         void set_shares(float shares);
