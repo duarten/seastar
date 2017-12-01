@@ -43,14 +43,8 @@ void schedule_urgent(task t);
 
 
 inline
-std::unique_ptr<task>
-make_task_ptr(task_func func) {
-    return std::make_unique<task>(current_scheduling_group(), std::move(func));
-}
-
-inline
 task
-make_task(scheduling_group sg, task_func func) {
+make_task(task_func func) {
     return task(current_scheduling_group(), std::move(func));
 }
 
