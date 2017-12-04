@@ -22,8 +22,12 @@
 #pragma once
 
 #include "future.hh"
+#include <boost/intrusive/list.hpp>
+#include <boost/range/algorithm/for_each.hpp>
 #include <experimental/optional>
 #include <exception>
+
+namespace bi = boost::intrusive;
 
 namespace seastar {
 
@@ -47,8 +51,48 @@ public:
 /// two problems: preventing new requests from coming in, and knowing when existing
 /// requests have completed.  The \c gate class provides a solution.
 class gate {
+public:
+    class signal_target : public bi::list_base_hook<bi::link_mode<bi::auto_unlink>> {
+        friend class gate;
+
+        gate* _g;
+        noncopyable_function<void ()> _target;
+
+        void on_close() {
+            _target();
+        }
+
+        explicit signal_target(gate& g, noncopyable_function<void ()> target)
+                : _g(&g)
+                ,  _target(std::move(target)) {
+            g._to_signal.push_back(*this);
+        }
+
+    public:
+        signal_target() = default;
+
+        signal_target(signal_target&& other)
+                : _g(other._g)
+                , _target(std::move(other._target)) {
+            if (other.is_linked()) {
+                signal_target_list_type::node_algorithms::init(this_ptr());
+                signal_target_list_type::node_algorithms::swap_nodes(other.this_ptr(), this_ptr());
+            }
+        }
+
+        signal_target& operator=(signal_target&& other) {
+            if (this != &other) {
+                this->~signal_target();
+                new (this) signal_target(std::move(other));
+            }
+            return *this;
+        }
+    };
+ private:
     size_t _count = 0;
     stdx::optional<promise<>> _stopped;
+    using signal_target_list_type = bi::list<signal_target, bi::constant_time_size<false>>;
+    signal_target_list_type _to_signal;
 public:
     /// Registers an in-progress request.
     ///
@@ -95,6 +139,7 @@ public:
         if (!_count) {
             _stopped->set_value();
         }
+        boost::range::for_each(_to_signal, std::mem_fn(&signal_target::on_close));
         return _stopped->get_future();
     }
 
@@ -106,6 +151,14 @@ public:
     /// Returns whether the gate is closed.
     bool is_closed() const {
         return bool(_stopped);
+    }
+
+    /// Register callback to be invoked when the gate is closed.
+    ///
+    /// Returns a handle to the registration, which ensure the
+    /// callback is unregistered when the handle's lifetime ends.
+    signal_target signal_on_close(noncopyable_function<void ()> target) {
+        return signal_target(*this, std::move(target));
     }
 };
 
