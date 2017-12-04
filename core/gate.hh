@@ -179,4 +179,60 @@ with_gate(gate& g, Func&& func) {
 }
 /// @}
 
+GCC6_CONCEPT(
+template<typename Policy, typename Func, typename Ret = std::result_of_t<Func()>>
+concept bool RetryPolicy =
+    requires { seastar::Future<Ret>; }
+    && requires(Policy& p, Ret& r, gate& g) {
+        { p.prepare(g) } -> future<>;
+        { p.done(std::move(r)) } -> stdx::optional<Ret>;
+        { p.backoff(g) } -> future<>;
+    };
+)
+
+namespace {
+
+template<typename Policy, typename Func>
+inline
+std::result_of_t<Func()>
+with_gate_retry_step(gate& g, Policy& p, Func& func) {
+    return func().then_wrapped([&] (auto&& f) {
+        if (g.is_closed()) {
+            return std::move(f);
+        }
+        auto done = p.done(std::move(f));
+        if (done) {
+            return std::move(*done);
+        }
+        return p.backoff(g).then([&] {
+            return with_gate_retry_step(g, p, func);
+        });
+    });
+};
+
+}
+
+/// Executes the function \c func making sure the gate \c g is properly entered
+/// and later on, properly left, with the specified retry policy.
+///
+/// \param func function to be executed; must support multiple invocations.
+/// \param g the gate. Caller must make sure that it outlives this function.
+/// \returns whatever \c func returns
+///
+/// \relates gate
+template <typename Policy, typename Func>
+GCC6_CONCEPT( requires RetryPolicy<Policy, Func> )
+inline
+auto
+with_gate(gate& g, Policy&& p, Func func) {
+    return do_with(std::forward<Policy>(p), std::move(func), [&g] (auto& p, auto& func) {
+        return with_gate(g, [&] {
+            return p.prepare(g).then([&] {
+                return with_gate_retry_step(g, p, func);
+            });
+        });
+    });
+};
+/// @}
+
 }
