@@ -25,6 +25,7 @@
 #include <chrono>
 #include <functional>
 
+#include "core/gate.hh"
 #include "core/shared_ptr.hh"
 #include "core/reactor.hh"
 #include "core/future.hh"
@@ -78,6 +79,43 @@ future<> sleep_abortable(std::chrono::duration<Rep, Period> dur) {
             std::rethrow_exception(ep);
         } catch(condition_variable_timed_out&) {};
     });
+}
+
+/// Returns a future which completes after a specified time has elapsed
+/// or throws \ref sleep_aborted exception if the sleep is aborted.
+///
+/// \param dur minimum amount of time before the returned future becomes
+///            ready.
+/// \param g the gate that, upon being closes, notifies that the sleep
+///            should be aborted.
+/// \return A \ref future which becomes ready when the sleep duration elapses.
+template <typename Clock = steady_clock_type, typename Rep, typename Period>
+future<> sleep_abortable(std::chrono::duration<Rep, Period> dur, gate& g) {
+    if (g.is_closed()) {
+        return make_exception_future<>(sleep_aborted());
+    }
+
+    struct sleeper {
+        promise<> done;
+        timer<Clock> tmr;
+        gate::signal_target st;
+
+        sleeper(std::chrono::duration<Rep, Period> dur, gate& g)
+                : tmr([this, &g] {
+                    if (!g.is_closed()) {
+                        done.set_value();
+                    }
+                  })
+                , st(g.signal_on_close([this] {
+                    if (tmr.cancel()) {
+                       done.set_exception(sleep_aborted());
+                    }
+                  })) {
+            tmr.arm(dur);
+        }
+    };
+    auto s = std::make_unique<sleeper>(dur, g);
+    return s->done.get_future().finally([s = std::move(s)] { });
 }
 
 }
