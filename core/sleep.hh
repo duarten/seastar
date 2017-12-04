@@ -25,6 +25,7 @@
 #include <chrono>
 #include <functional>
 
+#include "core/abort_source.hh"
 #include "core/shared_ptr.hh"
 #include "core/reactor.hh"
 #include "core/future.hh"
@@ -78,6 +79,43 @@ future<> sleep_abortable(std::chrono::duration<Rep, Period> dur) {
             std::rethrow_exception(ep);
         } catch(condition_variable_timed_out&) {};
     });
+}
+
+/// Returns a future which completes after a specified time has elapsed
+/// or throws \ref sleep_aborted exception if the sleep is aborted.
+///
+/// \param dur minimum amount of time before the returned future becomes
+///            ready.
+/// \param as the \ref abort_source that eventually notifies that the sleep
+///            should be aborted.
+/// \return A \ref future which becomes ready when the sleep duration elapses.
+template <typename Clock = steady_clock_type, typename Rep, typename Period>
+future<> sleep_abortable(std::chrono::duration<Rep, Period> dur, abort_source& as) {
+    if (as.abort_requested()) {
+        return make_exception_future<>(sleep_aborted());
+    }
+
+    struct sleeper {
+        promise<> done;
+        timer<Clock> tmr;
+        abort_source::subscription sc;
+
+        sleeper(std::chrono::duration<Rep, Period> dur, abort_source& as)
+                : tmr([this, &as] {
+                    if (!as.abort_requested()) {
+                        done.set_value();
+                    }
+                  })
+                , sc(as.subscribe([this] {
+                    if (tmr.cancel()) {
+                       done.set_exception(sleep_aborted());
+                    }
+                  })) {
+            tmr.arm(dur);
+        }
+    };
+    auto s = std::make_unique<sleeper>(dur, as);
+    return s->done.get_future().finally([s = std::move(s)] { });
 }
 
 }
