@@ -82,6 +82,10 @@
 #include <cxxabi.h>
 #endif
 
+#ifdef DEBUG
+#include <random>
+#endif
+
 #include <sys/mman.h>
 #include <sys/utsname.h>
 #include <linux/falloc.h>
@@ -2488,6 +2492,10 @@ void reactor::run_tasks(task_queue& tq) {
     // Make sure new tasks will inherit our scheduling group
     *internal::current_scheduling_group_ptr() = scheduling_group(tq._id);
     auto& tasks = tq._q;
+#ifdef DEBUG
+    std::default_random_engine rng;
+    std::shuffle(tasks.begin(), tasks.end(), rng);
+#endif
     while (!tasks.empty()) {
         auto tsk = std::move(tasks.front());
         tasks.pop_front();
