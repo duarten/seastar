@@ -32,6 +32,7 @@
 #include "core/print.hh"
 #include "core/temporary_buffer.hh"
 #include "core/iostream.hh"
+#include "core/gate.hh"
 #include <sys/types.h>
 #include <boost/variant.hpp>
 
@@ -242,6 +243,7 @@ public:
 /// A listening socket, waiting to accept incoming network connections.
 class server_socket {
     std::unique_ptr<net::server_socket_impl> _ssi;
+    gate _g;
 public:
     /// Constructs a \c server_socket not corresponding to a connection
     server_socket();

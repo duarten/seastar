@@ -139,15 +139,17 @@ server_socket::~server_socket() {
 }
 
 future<connected_socket, socket_address> server_socket::accept() {
-    if (!_ssi) {
+    if (_g.is_closed()) {
         return make_exception_future<connected_socket, socket_address>(std::system_error(ECONNABORTED, std::system_category()));
     }
-    return _ssi->accept();
+    return with_gate(_g, [this] {
+        return  _ssi->accept();
+    });
 }
 
 void server_socket::abort_accept() {
     _ssi->abort_accept();
-    _ssi = nullptr;
+    _g.close().handle_exception([ssi = std::move(_ssi)] (std::exception_ptr ignored) { });
 }
 
 socket_address::socket_address(ipv4_addr addr)
