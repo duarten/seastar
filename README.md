@@ -27,22 +27,10 @@ Configuring Seastar via
 will create a localized development environment specific to Seastar by downloading, compiling, and installing all dependencies of the library.
 
 The build type defaults to `Debug` and can be changed with the `-t`
-option. These include the common cmake ones (`Debug`, `RelWithDebInfo`,
-`Release`, etc), but there are a few peculiarities in Seastar:
-
-- `Debug` includes sanitizers
-- All build modes enable asserts
-- There is a `Dev` build. It has no debug information nor sanitizers and just
-  minimum optimizations. The objective is to build quickly
-
-It is convenient to have multiple build directories and alternate
-between them depending on what is being done.
-
-```
-$ ./cooking.sh -r dev -d build-dev -t Dev     # Use for quick edit-compile-test cycle
-$ ./cooking.sh -r dev -d build-dbg -t Debug   # Use to run gdb
-$ ./cooking.sh -r dev -d build-rel -t Release # Use to benchmark
-```
+option. These include the common cmake ones: `Debug`, `RelWithDebInfo`,
+`Release`, etc. All build modes enable asserts. The `Debug` mode includes
+sanitizers. A `Dev` mode exists, which has no debug information nor sanitizers,
+and just minimum optimizations, intented for quick builds.
 
 You can then compile:
 
@@ -51,7 +39,19 @@ $ cd build
 $ ninja
 ```
 
-Alternatively, system packages (via RPM or APT packages, for example) can be used to supply dependencies as well. There are distribution-specific instructions for [Fedora](doc/building-fedora.md), [CentOS](doc/building-centos.md) and [Ubuntu](doc/building-ubuntu.md). In general, the `install-dependencies.sh` will attempt to install all necessary packages for your distribution.
+It is possible to have multiple build directories and alternate
+between them depending on what is being done, which can be specified by the `-d`
+option:
+
+```
+$ ./cooking.sh -r dev -d build-dev -t Dev     # Use for quick edit-compile-test cycle
+$ ./cooking.sh -r dev -d build-dbg -t Debug   # Use to run gdb
+$ ./cooking.sh -r dev -d build-rel -t Release # Use for production
+```
+
+Alternatively to `cooking.sh`, system packages (via RPM or APT packages, for example) can be used to supply dependencies as well.
+There are distribution-specific instructions for [Fedora](doc/building-fedora.md), [CentOS](doc/building-centos.md) and [Ubuntu](doc/building-ubuntu.md).
+In general, the `install-dependencies.sh` will attempt to install all necessary packages for your distribution.
 
 There are also instructions for building on any host that supports [Docker](doc/building-docker.md).
 
