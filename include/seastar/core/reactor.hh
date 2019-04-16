@@ -413,6 +413,7 @@ private:
     friend class internal::reactor_stall_sampler;
     friend class reactor_backend_epoll;
     friend class reactor_backend_aio;
+    friend class reactor_backend_iouring;
 public:
     class poller {
         std::unique_ptr<pollfn> _pollfn;
@@ -538,7 +539,7 @@ private:
     sched_clock::duration _task_quota;
     /// Handler that will be called when there is no task to execute on cpu.
     /// It represents a low priority work.
-    /// 
+    ///
     /// Handler's return value determines whether handler did any actual work. If no work was done then reactor will go
     /// into sleep.
     ///
@@ -779,7 +780,7 @@ public:
 
     /// Set a handler that will be called when there is no task to execute on cpu.
     /// Handler should do a low priority work.
-    /// 
+    ///
     /// Handler's return value determines whether handler did any actual work. If no work was done then reactor will go
     /// into sleep.
     ///
