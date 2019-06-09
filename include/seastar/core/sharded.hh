@@ -791,6 +791,86 @@ foreign_ptr<T> make_foreign(T ptr) {
     return foreign_ptr<T>(std::move(ptr));
 }
 
+namespace internal {
+
+template<typename T, typename BoolLike>
+class emptyable;
+
+template<typename T>
+class emptyable<T, std::true_type> {
+    T _v;
+
+public:
+    static constexpr bool move_noexcept = std::is_nothrow_move_constructible<T>::value;
+    static_assert(std::is_move_constructible<T>::value, "Types must be move constructible");
+
+    explicit emptyable(T&& v) noexcept(move_noexcept)
+            : _v(std::move(v)) {
+    }
+
+    operator bool() const noexcept {
+        return bool(_v);
+    }
+};
+
+template<typename T>
+class emptyable<T, std::false_type> {
+    T _v;
+    bool _empty;
+
+public:
+    static constexpr bool move_noexcept = std::is_nothrow_move_constructible<T>::value;
+    static_assert(std::is_move_constructible<T>::value, "Types must be move constructible");
+
+    explicit emptyable(T&& v) noexcept(move_noexcept)
+            : _v(std::move(v))
+            , _empty(false) {
+    }
+
+    emptyable(emptyable&& other) noexcept(move_noexcept)
+            : _v(std::move(other._v))
+            , _empty(std::exchange(other._empty, true)) {
+    }
+
+    emptyable& operator=(T&& other) noexcept(move_noexcept) {
+        _v = std::move(other._v);
+        _empty = std::exchange(other._empty, true);
+    }
+
+    operator bool() const noexcept {
+        return _empty;
+    }
+};
+
+template<typename T>
+using as_bool = typename std::is_convertible<T, bool>::type;
+
+} // namespace internal
+
+/// Marker type that designates a graph of objects that may
+/// have originated on a different CPU.
+///
+/// \c remote<> is a move-only object; it cannot be copied.
+///
+template<typename T, typename B = internal::as_bool<T>>
+class remote {
+    internal::emptyable<T, B> _v;
+    shard_id _origin_cpu;
+
+public:
+    explicit remote(T&& v) noexcept(emptyable<T, B>::move_noexcept)
+            : _v(std::move(v))
+            , _origin_cpu(engine().cpu_id()) {
+    }
+
+    remote(remote&&) = default;
+    remote& operator=(remote&&) = default;
+
+    ~remote() noexcept {
+        assert(!_v || _origin_cpu == engine().cpu_id());
+    }
+};
+
 /// @}
 
 template<typename T>
