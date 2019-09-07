@@ -1192,3 +1192,92 @@ SEASTAR_THREAD_TEST_CASE(test_copy_range) {
         BOOST_REQUIRE_EQUAL(calls, 3);
     }
 }
+
+SEASTAR_THREAD_TEST_CASE(test_copy_range_parallel) {
+    auto input = std::vector<int32_t>({1, 4, 7, 9});
+    auto ctrl = std::vector<sstring>({"1", "4", "7", "9"});
+    // Empty
+    {
+        std::vector<int32_t> empty;
+        auto res = copy_range_parallel<std::vector<sstring>>(empty, [] (int32_t) {
+            return sstring();
+        }).get0();
+        BOOST_REQUIRE(res.empty());
+    }
+    // Some futures defer
+    {
+        bool defer = false;
+        auto res = copy_range_parallel<std::vector<sstring>>(input, [&] (int32_t i) {
+            return (std::exchange(defer, !defer) ? later() : make_ready_future<>()).then([i] {
+                return fmt::format("{}", i);
+            });
+        }).get0();
+        BOOST_CHECK_EQUAL_COLLECTIONS(res.begin(), res.end(), ctrl.begin(), ctrl.end());
+    }
+    // All futures defer
+    {
+        auto res = copy_range_parallel<std::vector<sstring>>(input, [&] (int32_t i) {
+            return later().then([i] {
+                return fmt::format("{}", i);
+            });
+        }).get0();
+        BOOST_CHECK_EQUAL_COLLECTIONS(res.begin(), res.end(), ctrl.begin(), ctrl.end());
+    }
+    // Immediate result
+    {
+        auto res = copy_range_parallel<std::vector<sstring>>(input, [&] (int32_t i) {
+            return fmt::format("{}", i);
+        }).get0();
+        BOOST_CHECK_EQUAL_COLLECTIONS(res.begin(), res.end(), ctrl.begin(), ctrl.end());
+    }
+    // Throws immediately
+    {
+        BOOST_CHECK_EXCEPTION(copy_range_parallel<std::vector<sstring>>(input, [&] (int32_t i) {
+            throw i;
+            __builtin_unreachable();
+            return sstring();
+        }).get(), int, [] (int v) { return v == 9; });
+    }
+    // Throws with defer
+    {
+        unsigned calls = 0;
+        BOOST_CHECK_EXCEPTION(copy_range_parallel<std::vector<sstring>>(input, [&] (int32_t i) {
+            if (i == 4) {
+                throw i;
+            }
+            return later().then([&] {
+                calls++;
+                return sstring();
+            });
+        }).get(), int32_t, [] (int32_t v) { return v == 4; });
+        BOOST_REQUIRE_EQUAL(calls, input.size() - 1);
+    }
+    // Throws after defer
+    {
+        unsigned calls = 0;
+        BOOST_CHECK_EXCEPTION(copy_range_parallel<std::vector<sstring>>(input, [&] (int32_t i) {
+            return later().then([i, &calls] {
+                calls++;
+                if (i == 4) {
+                    throw i;
+                }
+                return sstring();
+            });
+        }).get(), int32_t, [] (int32_t v) { return v == 4; });
+        BOOST_REQUIRE_EQUAL(calls, input.size());
+    }
+    // Throws first exception after defer
+    {
+        unsigned calls = 0;
+        BOOST_CHECK_EXCEPTION(copy_range_parallel<std::vector<sstring>>(input, [&] (int32_t i) {
+            return later().then([i, &calls] {
+                calls++;
+                if (i > 4) {
+                    throw i;
+                }
+                return sstring();
+            });
+        }).get(), int32_t, [] (int32_t v) { return v == 7; });
+        BOOST_REQUIRE_EQUAL(calls, input.size());
+    }
+}
