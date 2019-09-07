@@ -110,9 +110,13 @@ iterator_range_estimate_vector_capacity(Iterator begin, Iterator end, std::forwa
 
 /// \cond internal
 
-class parallel_for_each_state final : private continuation_base<> {
-    std::vector<future<>> _incomplete;
-    promise<> _result;
+template<typename Result, typename... Args>
+class parallel_for_each_state final : private continuation_base<Args...> {
+    using base = continuation_base<Args...>;
+    using future_type = typename base::future_type;
+    using promise_type = typename futurize<Result>::promise_type;
+    std::vector<future_type> _incomplete;
+    promise_type _result;
     // use optional<> to avoid out-of-line constructor
     compat::optional<std::exception_ptr> _ex;
 private:
@@ -133,9 +137,9 @@ private:
             _incomplete.pop_back();
         }
 
-        // If there's an incompelete future, wait for it.
+        // If there's an incomplete future, wait for it.
         if (!_incomplete.empty()) {
-            internal::set_callback(_incomplete.back(), std::unique_ptr<continuation_base<>>(this));
+            internal::set_callback(_incomplete.back(), std::unique_ptr<base>(this));
             // This future's state will be collected in run_and_dispose(), so we can drop it.
             _incomplete.pop_back();
             return;
@@ -150,10 +154,10 @@ private:
         delete this;
     }
     virtual void run_and_dispose() noexcept override {
-        if (_state.failed()) {
-            _ex = std::move(_state).get_exception();
+        if (base::_state.failed()) {
+            _ex = std::move(base::_state).get_exception();
         }
-        _state = {};
+        base::_state = {};
         wait_for_one();
     }
 public:
@@ -163,10 +167,10 @@ public:
     void add_exception(std::exception_ptr ex) {
         _ex = std::move(ex);
     }
-    void add_future(future<> f) {
+    void add_future(future_type f) {
         _incomplete.push_back(std::move(f));
     }
-    future<> get_future() {
+    future_type get_future() {
         return _result.get_future();
     }
     void start() {
@@ -195,7 +199,7 @@ GCC6_CONCEPT( requires requires (Func f, Iterator i) { { f(*i++) } -> future<>; 
 inline
 future<>
 parallel_for_each(Iterator begin, Iterator end, Func&& func) noexcept {
-    parallel_for_each_state* s = nullptr;
+    parallel_for_each_state<void>* s = nullptr;
     compat::optional<std::exception_ptr> ex;
     // Process all elements, giving each future the following treatment:
     //   - available, not failed: do nothing
@@ -205,7 +209,7 @@ parallel_for_each(Iterator begin, Iterator end, Func&& func) noexcept {
         auto f = futurize_apply(std::forward<Func>(func), *begin++);
         if (!f.available()) {
             if (!s) {
-                s = new parallel_for_each_state;
+                s = new parallel_for_each_state<void>();
                 using itraits = std::iterator_traits<Iterator>;
                 s->reserve(internal::iterator_range_estimate_vector_capacity(begin, end, typename itraits::iterator_category()) + 1);
             }
