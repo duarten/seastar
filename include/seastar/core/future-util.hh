@@ -162,6 +162,10 @@ private:
         wait_for_one();
     }
 public:
+    parallel_for_each_state() = default;
+    parallel_for_each_state(std::vector<future_type>&& v)
+        : _incomplete(std::move(v)) {
+    }
     void reserve(size_t n) {
         _incomplete.reserve(n);
     }
