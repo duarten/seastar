@@ -110,16 +110,25 @@ iterator_range_estimate_vector_capacity(Iterator begin, Iterator end, std::forwa
 
 /// \cond internal
 
-template<typename Result, typename... Args>
+struct identity {
+    constexpr void operator()(auto&, auto&&) const noexcept { }
+};
+
+template<
+    typename Result,
+    typename Accumulator = identity,
+    typename... Args>
 class parallel_for_each_state final : private continuation_base<Args...> {
     using base = continuation_base<Args...>;
     using future_type = typename base::future_type;
+    using result_type = typename futurize<Result>::value_type;
     using promise_type = typename futurize<Result>::promise_type;
     std::vector<future_type> _incomplete;
-    promise_type _result;
+    result_type _result;
+    promise_type _result_promise;
     // use optional<> to avoid out-of-line constructor
     compat::optional<std::exception_ptr> _ex;
-private:
+protected:
     // Wait for one of the futures in _incomplete to complete, and then
     // decide what to do: wait for another one, or deliver _result if all
     // are complete.
@@ -133,6 +142,8 @@ private:
         while (!_incomplete.empty() && _incomplete.back().available()) {
             if (_incomplete.back().failed()) {
                 add_exception(_incomplete.back().get_exception());
+            } else {
+                Accumulator()(_result, _incomplete.back().get());
             }
             _incomplete.pop_back();
         }
@@ -147,17 +158,18 @@ private:
 
         // Everything completed, report a result.
         if (__builtin_expect(bool(_ex), false)) {
-            _result.set_exception(std::move(*_ex));
+            _result_promise.set_exception(std::move(*_ex));
         } else {
-            _result.set_value();
+            _result_promise.set_value(std::move(_result));
         }
         delete this;
     }
     virtual void run_and_dispose() noexcept override {
         if (base::_state.failed()) {
             _ex = std::move(base::_state).get_exception();
+        } else {
+            Accumulator()(_result, std::exchange(base::_state, {}).get_value());
         }
-        base::_state = {};
         wait_for_one();
     }
 public:
@@ -174,8 +186,8 @@ public:
     void add_future(future_type f) {
         _incomplete.push_back(std::move(f));
     }
-    future_type get_future() {
-        return _result.get_future();
+    typename futurize<Result>::type get_future() {
+        return _result_promise.get_future();
     }
     void start() {
         wait_for_one();
