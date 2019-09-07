@@ -478,7 +478,7 @@ public:
 };
 
 }
-    
+
 /// Invokes given action until it fails or the function requests iteration to stop by returning
 /// an engaged \c future<compat::optional<T>>.  The value is extracted from the
 /// \c optional, and returned, as a future, from repeat_until_value().
@@ -580,7 +580,7 @@ public:
 };
 
 }
-    
+
 /// Invokes given action until it fails or given condition evaluates to true.
 ///
 /// \param stop_cond a callable taking no arguments, returning a boolean that
@@ -1491,6 +1491,97 @@ GCC6_CONCEPT( requires requires (AsyncAction aa, Range r, Container c) {
 inline
 future<Container> copy_range(Range& r, AsyncAction action) {
     return copy_range<Container>(std::begin(r), std::end(r), std::move(action));
+}
+
+/// Transform the input range, applying to each element the
+/// specified asynchronous function in parallel.
+///
+/// \param begin an \c InputIterator designating the beginning of the range
+/// \param end an \c InputIterator designating the end of the range
+/// \param action a callable, taking a reference to objects from the range
+///               as a parameter, and returning a \c future<T> that contains
+///               the result of transforming an input element.
+/// \return a future resolving to the result container on success, or the
+/// last failed future if \c action failed.
+template<typename Container, typename Iterator, typename AsyncAction>
+GCC6_CONCEPT( requires requires (AsyncAction aa, Iterator it, Container c) {
+    futurize_apply(aa, *it++);
+    requires is_future<decltype(futurize_apply(aa, *it))>::value;
+    *std::back_inserter(c) = futurize_apply(aa, *it).get0();
+} )
+inline
+future<Container> copy_range_parallel(Iterator begin, Iterator end, AsyncAction action) {
+    using value_type = std::decay_t<decltype(futurize_apply(action, *begin).get0())>;
+    using vector_type = std::vector<future<value_type>>;
+    using itraits = std::iterator_traits<Iterator>;
+
+    vector_type fs;
+    fs.reserve(internal::iterator_range_estimate_vector_capacity(begin, end, typename itraits::iterator_category()));
+
+    bool available = true;
+    std::optional<std::exception_ptr> ex;
+    while (begin != end) {
+        fs.push_back(futurize_apply(action, *begin++));
+        if (fs.back().available()) {
+            if (__builtin_expect(fs.back().failed(), false)) {
+                ex = fs.back().get_exception();
+            }
+        } else {
+            available = false;
+        }
+    }
+    if (!available) {
+        struct acc {
+            void operator()(std::tuple<Container>& acc, std::tuple<value_type>&& t) const {
+                *std::back_inserter(std::get<0>(acc)) = std::get<0>(std::move(t));
+            }
+        };
+        auto s = new parallel_for_each_state<Container, acc, value_type>(std::move(fs));
+        if (__builtin_expect(bool(ex), false)) {
+            s->add_exception(std::move(*ex));
+        }
+        // s->start() takes ownership of s (and chains it to one of the futures it contains)
+        // so this isn't a leak
+        s->start();
+        auto f = s->get_future();
+        return f.then([s] (Container&& c) {
+            // Reverse later rather than sooner to take advantage of the
+            // "futures complete in order" heuristic.
+            std::reverse(std::begin(c), std::end(c));
+            return std::move(c);
+        });
+    }
+
+    if (__builtin_expect(bool(ex), false)) {
+        return make_exception_future<Container>(std::move(*ex));
+    }
+
+    Container c;
+    auto out = std::back_inserter(c);
+    for (auto& f : fs) {
+        *out++ = std::move(f).get0();
+    }
+    return make_ready_future<Container>(std::move(c));
+}
+
+/// Transform the input range, applying to each element the
+/// specified asynchronous function in parallel.
+///
+/// \param range a \c Range object designating input values
+/// \param action a callable, taking a reference to objects from the range
+///               as a parameter, and returning a \c future<T> that contains
+///               the result of transforming an input element.
+/// \return a future resolving to the result container on success, or the
+/// last failed future if \c action failed.
+template<typename Container, typename Range, typename AsyncAction>
+GCC6_CONCEPT( requires requires (AsyncAction aa, Range r, Container c) {
+    futurize_apply(aa, *r.begin());
+    requires is_future<decltype(futurize_apply(aa, *r.begin()))>::value;
+    *std::back_inserter(c) = futurize_apply(aa, *r.begin()).get0();
+} )
+inline
+future<Container> copy_range_parallel(Range& r, AsyncAction action) {
+    return copy_range_parallel<Container>(std::begin(r), std::end(r), std::move(action));
 }
 
 }
