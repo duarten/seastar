@@ -1108,3 +1108,87 @@ SEASTAR_THREAD_TEST_CASE(test_broken_promises) {
     }
     BOOST_CHECK_THROW(f->get(), broken_promise);
 }
+
+SEASTAR_THREAD_TEST_CASE(test_copy_range) {
+    auto input = std::vector<int32_t>({1, 4, 7, 9});
+    auto ctrl = std::vector<sstring>({"1", "4", "7", "9"});
+    // Empty
+    {
+        std::vector<int32_t> empty;
+        auto res = copy_range<std::vector<sstring>>(empty, [] (int32_t) {
+            return sstring();
+        }).get0();
+        BOOST_REQUIRE(res.empty());
+    }
+    // Some futures defer
+    {
+        auto order = std::vector<int32_t>();
+        bool defer = false;
+        auto res = copy_range<std::vector<sstring>>(input, [&] (int32_t i) {
+            order.push_back(i);
+            return (std::exchange(defer, !defer) ? later() : make_ready_future<>()).then([i] {
+                return fmt::format("{}", i);
+            });
+        }).get0();
+        BOOST_CHECK_EQUAL_COLLECTIONS(res.begin(), res.end(), ctrl.begin(), ctrl.end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(order.begin(), order.end(), input.begin(), input.end());
+    }
+    // All futures defer
+    {
+        auto order = std::vector<int32_t>();
+        auto res = copy_range<std::vector<sstring>>(input, [&] (int32_t i) {
+            order.push_back(i);
+            return later().then([i] {
+                return fmt::format("{}", i);
+            });
+        }).get0();
+        BOOST_CHECK_EQUAL_COLLECTIONS(res.begin(), res.end(), ctrl.begin(), ctrl.end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(order.begin(), order.end(), input.begin(), input.end());
+    }
+    // Immediate result
+    {
+        auto order = std::vector<int32_t>();
+        auto res = copy_range<std::vector<sstring>>(input, [&] (int32_t i) {
+            order.push_back(i);
+            return fmt::format("{}", i);
+        }).get0();
+        BOOST_CHECK_EQUAL_COLLECTIONS(res.begin(), res.end(), ctrl.begin(), ctrl.end());
+        BOOST_CHECK_EQUAL_COLLECTIONS(order.begin(), order.end(), input.begin(), input.end());
+    }
+    // Throws immediately
+    {
+        BOOST_CHECK_EXCEPTION(copy_range<std::vector<sstring>>(input, [&] (int32_t i) {
+            throw i;
+            __builtin_unreachable();
+            return sstring();
+        }).get(), int, [] (int v) { return v == 1; });
+    }
+    // Throws after defer
+    {
+        unsigned calls = 0;
+        BOOST_CHECK_EXCEPTION(copy_range<std::vector<sstring>>(input, [&] (int32_t i) {
+            return later().then([i, &calls] {
+                calls++;
+                if (i == 4) {
+                    throw i;
+                }
+                return sstring();
+            });
+        }).get(), int32_t, [] (int32_t v) { return v == 4; });
+        BOOST_REQUIRE_EQUAL(calls, 2);
+    }
+    // Throws first exception after defer
+    {
+        unsigned calls = 0;
+        BOOST_CHECK_EXCEPTION(copy_range<std::vector<sstring>>(input, [&] (int32_t i) {
+            return later().then([i, &calls] {
+                calls++;
+                if (i > 4) {
+                    throw i;
+                }
+                return sstring();
+            });
+        }).get(), int32_t, [] (int32_t v) { return v == 7; });
+        BOOST_REQUIRE_EQUAL(calls, 3);
+    }
+}
