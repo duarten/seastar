@@ -28,6 +28,7 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/do_with.hh>
+#include <seastar/core/internal/containers.hh>
 #include <seastar/core/timer.hh>
 #include <seastar/util/bool_class.hh>
 #include <tuple>
